@@ -1,0 +1,127 @@
+---
+title: "Determinants of MPG Ratings"
+author: "jhsdatascience"
+date: "06/20/2014"
+output: pdf_document
+---
+
+Is an automatic or manual transmission better for MPG? How much better? I use data on 32 vehicles to estimate the effect of transmission type on gas mileage. After controlling for physical characteristics of the cars and measurements of engine power I find little evidence that the type of transmission has an effect on gas mileage. Specifically, though the data show that a vehicle with manual transmission recieves `.176` better gas mileage than a similar vehicle with an automatic transmission, the standard error for this estimate is `1.304` and we cannot conclude that the effect is statistically different from zero.
+
+```{r, echo=F, results='hide'}
+data(mtcars)
+source('mtexti.R')
+nr <- nrow(mtcars); nc <- ncol(mtcars)
+opar <- par(no.readonly = T)
+```
+
+
+## Exploratory Analysis
+
+```{r, echo = F}
+nman <- sum(mtcars$am)
+am_mpg <- aggregate(mtcars$mpg, list(mtcars$am), mean)
+names(am_mpg) <- c('am', 'mean_mpg')
+```
+
+The data used for this analysis are from the `mtcars` dataset in the `R` library `datasets`. The data consist of `r nr` observations of `r nc` variables. Each observation corresponds to a given make of car. Of the `r nr` cars for which I have data, `r nman` have manual transmissions. The mean `mpg` for these cars is `r am_mpg$mean_mpg[2]`. The mean `mpg` for those with automatic transmissions is `r am_mpg$mean_mpg[1]`. The relationship between transmission type and gas mileage is more complicated than that. Figure 1, for example, shows that the number of cylinders may be confounding the relationship. Cars with automatic transmissions tend to have more cylinders and the number of cylinders is also highly (negatively) corelated with the miles per gallon. To build intuition for the models in the next section, I look more closely at the correlataions between each of the variables (see Figure 2 for a visualization):
+
+```{r, echo=FALSE}
+cors <- cor(mtcars)[c('mpg', 'am'),]
+cors[, order(abs(cors['mpg',]), decreasing = T)]
+```
+
+The following observations will help with model selection:
+
+1. It appears the variables related to the size of the car (`wt` and `disp`) and those related to the power of the engine (`cyl` and `hp`) have the strongest correlation with `mpg`. 
+2. The strong correlation between `mpg` and `am` disappears once we have controlled for `wt` (Figure 1).
+3. `am` is highly correlated with both `drat` and `gear` while these, `drat` especially, are also correlated with `mpg`.
+4. `am` is not very correlated with `qsec`, `vs`, and `carb`.
+
+## Model Selection
+
+I use these observations to construct a small set of models to test agaist each other. These are:
+
+1. `mpg ~ cyl + wt + am`
+2. `mpg ~ cyl + hp + wt + disp + am`
+3. `mpg ~ cyl + wt + drat + am`
+4. `mpg ~ cyl + wt + gear + am`
+5. `mpg ~ .`
+
+I will refer to these as `M1-M5`. `M1` should be thought of as the baseline, building on the intuition from Figure 1. `M2` checks this intuition against the first observation above: is it necessary to include all measures of vehicle size and power, or is a subset enough? `M3` and `M4` are included because of the potential for omitted variable bias (observation 3). `M5` is a catch all against which to test each of the others, `M1` in particular.
+
+```{r, echo = F}
+m1 <- lm(mpg ~ cyl + wt + am, data = mtcars)
+m2 <- lm(mpg ~ cyl + hp + wt + disp + am, data = mtcars)
+m3 <- lm(mpg ~ cyl + wt + drat + am, data = mtcars)
+m4 <- lm(mpg ~ cyl + wt + gear + am, data = mtcars)
+m5 <- lm(mpg ~ ., data = mtcars)
+```
+
+```{r, echo = F}
+drat_pvalue <- as.data.frame(summary(m3)$coefficients)['drat',]$`Pr(>|t|)`
+gear_pvalue <- as.data.frame(summary(m4)$coefficients)['gear',]$`Pr(>|t|)`
+m1_m2_F_pvalue <- anova(m1, m2)$`Pr(>F)`[2]
+m1_m5_F_pvalue <- anova(m1, m5)$`Pr(>F)`[2]
+```
+
+For models `M3` and `M4`, the coefficient on the added regressor is not significant at any of the standard levels: the p-value for the coefficient on `drat` in `M3` is `r drat_pvalue`; for the coefficient on `gear` in `M4`, the p-value is `r gear_pvalue`. The F-statistics for the nested models `M1`, `M2`, and `M5` imply that `M1` is sufficient for explaining most of the variation in `mpg`: the p-value for the null hypothesis that `M2` does not differ from `M1` is `r m1_m2_F_pvalue`; the p-value for testing `M5` against `M1` is `r m1_m5_F_pvalue`.
+
+The question remains whether the linear model is even appropriate for this problem. Residual plots and other diagnostics are in Figure 3 in the appendix. It is worth noting that that the errors appear roughly normal and that the scale-location plot indicates no problems with a failure of the homoskedasticity assumption. The residuals plot indicates a less than ideal fit and we should perhaps be concerned about too high leverage amongst some observations (`Toyota Corolla`, `Toyota Corona`, `Chrysler Imperial` have particularaly high dfbetas for some coefficients) but there is little pattern amongst these observations and dropping them does not drastically improve the overall quality of the residuals plot (Figure 4).
+
+```{r, echo=FALSE}
+am_pvalue <- as.data.frame(summary(m1)$coefficients)['am',]$`Pr(>|t|)`
+am_ci <- confint(m1, 'am', .95)
+```
+
+## Results
+
+Here are the full results for *M1*:
+
+```{r, echo=FALSE}
+summary(m1)
+```
+
+We cannot conclude that the type of transmission has a significant effect on gas mileage. Though the value of the coefficient on `am` indicates a positive effect, its p-value of `r am_pvalue` is not significant at any of the standard levels. In particular, the 95% confidence interval for the coefficient on `am`, (`r am_ci[1]`, `r am_ci[2]`), includes zero, implying that we cannot reject the null hypothesis that the effect of `am` on `mpg` is equal to zero. For this reason, I hesitate to treat the slight positive increase in gas mileage implied by the coefficient on `am` in *M1* as a real effect. The coefficients on `cyl` and `wt` are significant, implying that increasing the number of cylinders for a car while holding all else constant leads to `r abs(m1$coefficients['cyl'])` fewer miles per gallon and that increasing the weight of a car by 1000 pounds, holding all else constant, decreases miles per gallon by `r abs(m1$coefficients['wt'])`.
+
+## Appendix of figures
+
+```{r figure-1, echo = F, fig.height=7, fig.width=7}
+mpg_by_cyl <- split(mtcars, as.factor(mtcars$cyl))
+par(omi=rep(1.0, 4), mar = c(0,0,0,0), mfrow = c(1,3), xaxp  = c(0, 1, 1))
+with(mpg_by_cyl$`4`, plot(am, mpg, xaxt = 'n', xlim = c(-.1, 1.1), ylim = c(10, 35), ylab = 'Miles per gallon'))
+axis(1, at = c(0,1), labels = c('automatic', 'manual'), las = 2)
+mtexti('4 cyl', 3)
+mtexti('Miles per gallon', 2, .75, cex = 1.5)
+with(mpg_by_cyl$`6`, plot(am, mpg, xaxt = 'n', xlim = c(-.1, 1.1), ylim = c(10, 35), yaxt='n', ann=FALSE))
+axis(1, at = c(0,1), labels = c('automatic', 'manual'), las = 2)
+mtexti('6 cyl', 3)
+mtexti('Transmission', 1, .75, cex = 1.5)
+mtexti('Figure 1: A-M Transmission and MPG by Number of Cylinders', 3, .6, cex = 2)
+with(mpg_by_cyl$`8`, plot(am, mpg, xaxt = 'n', xlim = c(-.1, 1.1), ylim = c(10, 35), yaxt='n', ann=FALSE))
+axis(1, at = c(0,1), labels = c('automatic', 'manual'), las = 2)
+mtexti('8 cyl', 3)
+par(opar)
+```
+
+```{r figure-2, echo=F, fig.height=7, fig.width=7}
+pairs(mtcars, main = 'Figure 2: Correlations amonsgst the mtcars data')
+```
+
+```{r figure-3, echo=FALSE, fig.height=7, fig.width=7}
+par(mfrow = c(2,2), oma = c(0,0,2,0)) 
+plot(m1, sub.caption = 'Figure 3: Regression diagnostics for model M1')
+#mtext(, line = .5, outer = T)
+par(opar)
+```
+
+```{r figure-4, echo=FALSE, fig.height=7, fig.width=7}
+mtcars_reduced <- mtcars[!(rownames(mtcars) %in% c('Toyota Corolla', 'Toyota Corona', 'Chrysler Imperial')),]
+m1p <- lm(mpg ~ cyl + wt + am, data = mtcars_reduced)
+
+#par(mfrow = c(2,2), oma = c(0,0,2,0))
+plot(m1p, which = c(1), caption = list(''), main = 'Figure 4: Residuals vs. Fitted after dropping high leverage observations.')
+#par(opar)
+mtcars_other <- mtcars[(rownames(mtcars) %in% c('Toyota Corolla', 'Toyota Corona', 'Chrysler Imperial')),]
+# print(mtcars_other)
+```
+
